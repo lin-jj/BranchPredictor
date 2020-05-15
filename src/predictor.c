@@ -28,6 +28,8 @@ int lhistoryBits; // Number of bits used for Local History
 int pcIndexBits;  // Number of bits used for PC index
 int bpType;       // Branch Prediction Type
 int verbose;
+int *gresult, ghistory, gmask;
+int *lresult, lmask, selector;
 
 //------------------------------------//
 //      Predictor Data Structures     //
@@ -47,9 +49,33 @@ int verbose;
 void
 init_predictor()
 {
-  //
-  //TODO: Initialize Branch Predictor Data Structures
-  //
+  switch (bpType) {
+    case GSHARE:
+      gresult = calloc(1 << ghistoryBits, sizeof(int));
+      ghistory = 0;
+      gmask = 0;
+      for(int i = 0; i < ghistoryBits; i++) {
+        gmask = (gmask << 1) + 1;
+      }
+      break;
+    case TOURNAMENT:
+      selector = 0;
+      gresult = calloc(1 << ghistoryBits, sizeof(int));
+      ghistory = 0;
+      gmask = 0;
+      for(int i = 0; i < ghistoryBits; i++) {
+        gmask = (gmask << 1) + 1;
+      }
+      lresult = calloc(1 << pcIndexBits, sizeof(int));
+      lmask = 0;
+      for(int i = 0; i < pcIndexBits; i++) {
+        lmask = (lmask << 1) + 1;
+      }
+      break;
+    case CUSTOM:
+    default:
+      break;
+  }
 }
 
 // Make a prediction for conditional branch instruction at PC 'pc'
@@ -59,16 +85,27 @@ init_predictor()
 uint8_t
 make_prediction(uint32_t pc)
 {
-  //
-  //TODO: Implement prediction scheme
-  //
-
   // Make a prediction based on the bpType
+  int gpred, lpred;
   switch (bpType) {
     case STATIC:
       return TAKEN;
     case GSHARE:
+      if(gresult[(pc ^ ghistory) & gmask] > WN) {
+        return TAKEN;
+      }
+      else {
+        return NOTTAKEN;
+      }
     case TOURNAMENT:
+      gpred = gresult[ghistory & gmask] > WN;
+      lpred = lresult[pc & lmask] > WN;
+      if(selector < 2 && lpred || selector > 1 && gpred) {
+        return TAKEN;
+      }
+      else {
+        return NOTTAKEN;
+      }
     case CUSTOM:
     default:
       break;
@@ -85,7 +122,59 @@ make_prediction(uint32_t pc)
 void
 train_predictor(uint32_t pc, uint8_t outcome)
 {
-  //
-  //TODO: Implement Predictor training
-  //
+  switch (bpType) {
+    int correctness = 0;
+    case GSHARE:
+      if(outcome && gresult[(pc ^ ghistory) & gmask] < ST) {
+        gresult[(pc ^ ghistory) & gmask]++;
+      }
+      if(!outcome && gresult[(pc ^ ghistory) & gmask] > SN) {
+        gresult[(pc ^ ghistory) & gmask]--;
+      }
+      ghistory = (ghistory << 1) + (outcome? 1 : 0);
+      break;
+    case TOURNAMENT:
+      // update selector
+      if((outcome == 0) == gresult[ghistory & gmask] < WT) {
+        correctness += 1;
+      }
+      if((outcome == 0) == lresult[pc & lmask] < WT) {
+        correctness += 2;
+      }
+      switch (selector) {
+        case 0:
+          if(correctness == 1) {selector++;}
+          break;
+        case 1:
+          if(correctness == 1) {selector++;}
+          else if(correctness == 2) {selector--;}
+          break;
+        case 2:
+          if(correctness == 1) {selector++;}
+          else if(correctness == 2) {selector--;}
+          break;
+        case 3:
+          if(correctness == 2) {selector--;}
+          break;
+      }
+      // update global result
+      if(outcome && gresult[ghistory & gmask] < ST) {
+        gresult[ghistory & gmask]++;
+      }
+      if(!outcome && gresult[ghistory & gmask] > SN) {
+        gresult[ghistory & gmask]--;
+      }
+      ghistory = (ghistory << 1) + (outcome? 1 : 0);
+      // update local result
+      if(outcome && lresult[pc & lmask] < ST) {
+        lresult[pc & lmask]++;
+      }
+      if(!outcome && lresult[pc & lmask] > SN) {
+        lresult[pc & lmask]--;
+      }
+      break;
+    case CUSTOM:
+    default:
+      break;
+  }
 }
