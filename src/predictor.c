@@ -11,9 +11,9 @@
 //
 // TODO:Student Information
 //
-const char *studentName = "NAME";
-const char *studentID   = "PID";
-const char *email       = "EMAIL";
+const char *studentName = "Junjie Lin";
+const char *studentID   = "A53301275";
+const char *email       = "j5lin@ucsd.edu";
 
 //------------------------------------//
 //      Predictor Configuration       //
@@ -28,17 +28,13 @@ int lhistoryBits; // Number of bits used for Local History
 int pcIndexBits;  // Number of bits used for PC index
 int bpType;       // Branch Prediction Type
 int verbose;
-int *gresult, ghistory, gmask;
-int *lresult, lmask, selector;
 
 //------------------------------------//
 //      Predictor Data Structures     //
 //------------------------------------//
 
-//
-//TODO: Add your own Branch Predictor data structures here
-//
-
+int *gresult, ghistory, gmask;
+int *lhistoryTable, pcmask, *lresult, lmask, *selector;
 
 //------------------------------------//
 //        Predictor Functions         //
@@ -50,27 +46,19 @@ void
 init_predictor()
 {
   switch (bpType) {
-    case GSHARE:
-      gresult = calloc(1 << ghistoryBits, sizeof(int));
-      ghistory = 0;
-      gmask = 0;
-      for(int i = 0; i < ghistoryBits; i++) {
-        gmask = (gmask << 1) + 1;
-      }
-      break;
     case TOURNAMENT:
-      selector = 0;
-      gresult = calloc(1 << ghistoryBits, sizeof(int));
+      selector = malloc((1 << ghistoryBits) * sizeof(int));
+      for(int i = 0; i < (1 << ghistoryBits); i++) {
+        selector[i] = 2;
+      }
+      lhistoryTable = calloc(1 << pcIndexBits, sizeof(int));
+      pcmask = (1 << pcIndexBits) - 1;
+      lresult = calloc(1 << lhistoryBits, sizeof(int));
+      lmask = (1 << lhistoryBits) - 1;
+    case GSHARE:
       ghistory = 0;
-      gmask = 0;
-      for(int i = 0; i < ghistoryBits; i++) {
-        gmask = (gmask << 1) + 1;
-      }
-      lresult = calloc(1 << pcIndexBits, sizeof(int));
-      lmask = 0;
-      for(int i = 0; i < pcIndexBits; i++) {
-        lmask = (lmask << 1) + 1;
-      }
+      gresult = calloc(1 << ghistoryBits, sizeof(int));
+      gmask = (1 << ghistoryBits) - 1;
       break;
     case CUSTOM:
     default:
@@ -86,7 +74,7 @@ uint8_t
 make_prediction(uint32_t pc)
 {
   // Make a prediction based on the bpType
-  int gpred, lpred;
+  int gpred, lpred, lhistory;
   switch (bpType) {
     case STATIC:
       return TAKEN;
@@ -98,9 +86,10 @@ make_prediction(uint32_t pc)
         return NOTTAKEN;
       }
     case TOURNAMENT:
-      gpred = gresult[ghistory & gmask] > WN;
-      lpred = lresult[pc & lmask] > WN;
-      if(selector < 2 && lpred || selector > 1 && gpred) {
+      lhistory = lhistoryTable[pc & pcmask];
+      lpred = lresult[lhistory] > WN;
+      gpred = gresult[ghistory] > WN;
+      if(selector[ghistory] < 2 && lpred || selector[ghistory] > 1 && gpred) {
         return TAKEN;
       }
       else {
@@ -110,7 +99,6 @@ make_prediction(uint32_t pc)
     default:
       break;
   }
-
   // If there is not a compatable bpType then return NOTTAKEN
   return NOTTAKEN;
 }
@@ -123,55 +111,47 @@ void
 train_predictor(uint32_t pc, uint8_t outcome)
 {
   switch (bpType) {
-    int correctness = 0;
+    int lhistory, correctness = 0;
     case GSHARE:
-      if(outcome && gresult[(pc ^ ghistory) & gmask] < ST) {
+      if(outcome == TAKEN && gresult[(pc ^ ghistory) & gmask] < ST) {
         gresult[(pc ^ ghistory) & gmask]++;
       }
-      if(!outcome && gresult[(pc ^ ghistory) & gmask] > SN) {
+      if(outcome == NOTTAKEN && gresult[(pc ^ ghistory) & gmask] > SN) {
         gresult[(pc ^ ghistory) & gmask]--;
       }
-      ghistory = (ghistory << 1) + (outcome? 1 : 0);
+      ghistory = ((ghistory << 1) + (outcome == TAKEN)) & gmask;
       break;
     case TOURNAMENT:
+      lhistory = lhistoryTable[pc & pcmask];
       // update selector
-      if((outcome == 0) == gresult[ghistory & gmask] < WT) {
-        correctness += 1;
-      }
-      if((outcome == 0) == lresult[pc & lmask] < WT) {
+      if((outcome == TAKEN) == (lresult[lhistory] > WN)) {
         correctness += 2;
       }
-      switch (selector) {
-        case 0:
-          if(correctness == 1) {selector++;}
-          break;
-        case 1:
-          if(correctness == 1) {selector++;}
-          else if(correctness == 2) {selector--;}
-          break;
-        case 2:
-          if(correctness == 1) {selector++;}
-          else if(correctness == 2) {selector--;}
-          break;
-        case 3:
-          if(correctness == 2) {selector--;}
-          break;
+      if((outcome == TAKEN) == (gresult[ghistory] > WN)) {
+        correctness += 1;
+      }
+      if(correctness == 1 && selector[ghistory] < 3) {
+        selector[ghistory]++;
+      }
+      else if(correctness == 2 && selector[ghistory] > 0) {
+        selector[ghistory]--;
       }
       // update global result
-      if(outcome && gresult[ghistory & gmask] < ST) {
-        gresult[ghistory & gmask]++;
+      if(outcome == TAKEN && gresult[ghistory] < ST) {
+        gresult[ghistory]++;
       }
-      if(!outcome && gresult[ghistory & gmask] > SN) {
-        gresult[ghistory & gmask]--;
+      if(outcome == NOTTAKEN && gresult[ghistory] > SN) {
+        gresult[ghistory]--;
       }
-      ghistory = (ghistory << 1) + (outcome? 1 : 0);
+      ghistory = ((ghistory << 1) + (outcome == TAKEN)) & gmask;
       // update local result
-      if(outcome && lresult[pc & lmask] < ST) {
-        lresult[pc & lmask]++;
+      if(outcome == TAKEN && lresult[lhistory] < ST) {
+        lresult[lhistory]++;
       }
-      if(!outcome && lresult[pc & lmask] > SN) {
-        lresult[pc & lmask]--;
+      if(outcome == NOTTAKEN && lresult[lhistory] > SN) {
+        lresult[lhistory]--;
       }
+      lhistoryTable[pc & pcmask] = ((lhistoryTable[pc & pcmask] << 1) + (outcome == TAKEN)) & lmask;
       break;
     case CUSTOM:
     default:
