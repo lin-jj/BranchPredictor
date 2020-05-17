@@ -111,7 +111,7 @@ void
 train_predictor(uint32_t pc, uint8_t outcome)
 {
   switch (bpType) {
-    int lhistory, correctness = 0;
+    int gpred, lpred, lhistory, correctness = 0;
     case GSHARE:
       if(outcome == TAKEN && gresult[(pc ^ ghistory) & gmask] < ST) {
         gresult[(pc ^ ghistory) & gmask]++;
@@ -124,17 +124,20 @@ train_predictor(uint32_t pc, uint8_t outcome)
     case TOURNAMENT:
       lhistory = lhistoryTable[pc & pcmask];
       // update selector
-      if((outcome == TAKEN) == (lresult[lhistory] > WN)) {
-        correctness += 2;
-      }
-      if((outcome == TAKEN) == (gresult[ghistory] > WN)) {
-        correctness += 1;
-      }
-      if(correctness == 1 && selector[ghistory] < 3) {
-        selector[ghistory]++;
-      }
-      else if(correctness == 2 && selector[ghistory] > 0) {
-        selector[ghistory]--;
+      // train_selector(pc, outcome);
+      lpred = lresult[lhistory] > WN;
+      gpred = gresult[ghistory] > WN;
+      if(lpred != gpred) {
+        if(gpred == outcome) {
+          if(selector[ghistory] < 3) {
+            selector[ghistory] += 1;
+          }
+        }
+        else {
+          if(selector[ghistory] > 0) {
+            selector[ghistory] -= 1;
+          }
+        }
       }
       // update global result
       if(outcome == TAKEN && gresult[ghistory] < ST) {
