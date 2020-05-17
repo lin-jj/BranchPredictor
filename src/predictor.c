@@ -124,7 +124,6 @@ train_predictor(uint32_t pc, uint8_t outcome)
     case TOURNAMENT:
       lhistory = lhistoryTable[pc & pcmask];
       // update selector
-      // train_selector(pc, outcome);
       lpred = lresult[lhistory] > WN;
       gpred = gresult[ghistory] > WN;
       if(lpred != gpred) {
