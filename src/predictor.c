@@ -33,15 +33,32 @@ int verbose;
 //      Predictor Data Structures     //
 //------------------------------------//
 
-int32_t *gresult, ghistory, gmask;
-int32_t *lhistoryTable, pcmask, *lresult, lmask, *selector;
-uint64_t h = 0, mask40 = 0xFFFFFFFFFF, mask10 = 0x3FF, mask8 = 0xFF;
+int32_t *gresult, *lhistoryTable, *lresult, *selector;
+uint64_t ghistory = 0, mask10 = 0x3FF, mask8 = 0xFF, pcmask, gmask, lmask;
 int8_t bank0[4096] = {6};
-int16_t bank[4][1024] = {0x600}, idx, tag, idxs[4], tags[4]; 
+int16_t bank[4][1024] = {0x600}, idx, tag, *idxs, *tags; 
 
 //------------------------------------//
 //        Predictor Functions         //
 //------------------------------------//
+
+void get_idx(uint32_t pc) {
+  free(idxs);
+  idxs = malloc(4 * sizeof(int16_t));
+  idxs[0] = (pc ^ ghistory ^ ghistory >> 10) & mask10;
+  idxs[1] = (idxs[0] ^ ghistory >> 20) & mask10;
+  idxs[2] = (idxs[1] ^ ghistory >> 30) & mask10;
+  idxs[3] = (idxs[2] ^ ghistory >> 40) & mask10;
+}
+
+void get_tag(uint32_t pc) {
+  free(tags);
+  tags = malloc(4 * sizeof(int16_t));
+  tags[0] = (pc ^ ghistory ^ ghistory >> 8) & mask8;
+  tags[1] = (tags[0] ^ ghistory >> 16) & mask8;
+  tags[2] = (tags[1] ^ ghistory >> 24) & mask8;
+  tags[3] = (tags[2] ^ ghistory >> 32) & mask8;
+}
 
 // Initialize the predictor
 //
@@ -50,22 +67,23 @@ init_predictor()
 {
   switch (bpType) {
     case TOURNAMENT:
-      selector = malloc((1 << ghistoryBits) * sizeof(int));
+      selector = malloc((1 << ghistoryBits) * sizeof(int32_t));
       for(int i = 0; i < (1 << ghistoryBits); i++) {
         selector[i] = 2;
       }
-      lhistoryTable = calloc(1 << pcIndexBits, sizeof(int));
+      lhistoryTable = calloc(1 << pcIndexBits, sizeof(int32_t));
       pcmask = (1 << pcIndexBits) - 1;
-      lresult = calloc(1 << lhistoryBits, sizeof(int));
+      lresult = calloc(1 << lhistoryBits, sizeof(int32_t));
       lmask = (1 << lhistoryBits) - 1;
     case GSHARE:
       ghistory = 0;
-      gresult = calloc(1 << ghistoryBits, sizeof(int));
+      gresult = calloc(1 << ghistoryBits, sizeof(int32_t));
       gmask = (1 << ghistoryBits) - 1;
       break;
     case CUSTOM:
       srand(5432);
       pcmask = (1 << 12) - 1;
+      break;
     default:
       break;
   }
@@ -101,13 +119,11 @@ make_prediction(uint32_t pc)
         return NOTTAKEN;
       }
     case CUSTOM:
-      idx = (pc ^ h ^ h >> 10 ^ h >> 20 ^ h >> 30 ^ h >> 40) & mask10;
-      tag = (pc ^ h ^ h >> 8 ^ h >> 16 ^ h >> 24 ^ h >> 32) & mask8;
+      get_idx(pc);
+      get_tag(pc);
       for(int x = 3; x >= 0; x--) {
-        if(tag == (bank[x][idx] >> 1 & mask8))
-          return bank[x][idx] >> 11;
-        idx ^= (h >> (x + 1) * 10) & mask10;
-        tag ^= (h >> (x + 1) * 8) & mask8;
+        if(tags[x] == (bank[x][idxs[x]] >> 1 & mask8))
+          return bank[x][idxs[x]] >> 11;
       }
       return bank0[pc & pcmask] >> 3;
     default:
@@ -171,14 +187,8 @@ train_predictor(uint32_t pc, uint8_t outcome)
       break;
     case CUSTOM:
       // update 3-bit counter
-      idxs[3] = (pc ^ h ^ h >> 10 ^ h >> 20 ^ h >> 30 ^ h >> 40) & mask10;
-      tags[3] = (pc ^ h ^ h >> 8 ^ h >> 16 ^ h >> 24 ^ h >> 32) & mask8;
-      idxs[2] = (pc ^ h ^ h >> 10 ^ h >> 20 ^ h >> 30) & mask10;
-      tags[2] = (pc ^ h ^ h >> 8 ^ h >> 16 ^ h >> 24) & mask8;
-      idxs[1] = (pc ^ h ^ h >> 10 ^ h >> 20) & mask10;
-      tags[1] = (pc ^ h ^ h >> 8 ^ h >> 16) & mask8;
-      idxs[0] = (pc ^ h ^ h >> 10) & mask10;
-      tags[0] = (pc ^ h ^ h >> 8) & mask8;
+      get_idx(pc);
+      get_tag(pc);
       int flag = 0;
       for(x = 3; x >= 0; x--) {
         if(tags[x] == (bank[x][idxs[x]] >> 1 & mask8)) {
@@ -225,7 +235,8 @@ train_predictor(uint32_t pc, uint8_t outcome)
           bank0[pc & pcmask] &= 0xFFFE;
         }
       }
-      h = (h << 1) + (outcome == TAKEN);
+      // update global history
+      ghistory = (ghistory << 1) + (outcome == TAKEN);
     default:
       break;
   }
