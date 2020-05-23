@@ -33,8 +33,11 @@ int verbose;
 //      Predictor Data Structures     //
 //------------------------------------//
 
-int *gresult, ghistory, gmask;
-int *lhistoryTable, pcmask, *lresult, lmask, *selector;
+int32_t *gresult, ghistory, gmask;
+int32_t *lhistoryTable, pcmask, *lresult, lmask, *selector;
+uint64_t h = 0, mask40 = 0xFFFFFFFFFF, mask10 = 0x3FF, mask8 = 0xFF;
+int8_t bank0[4096] = {6};
+int16_t bank[4][1024] = {0x600}, idx, tag, idxs[4], tags[4]; 
 
 //------------------------------------//
 //        Predictor Functions         //
@@ -61,6 +64,8 @@ init_predictor()
       gmask = (1 << ghistoryBits) - 1;
       break;
     case CUSTOM:
+      srand(5432);
+      pcmask = (1 << 12) - 1;
     default:
       break;
   }
@@ -96,6 +101,15 @@ make_prediction(uint32_t pc)
         return NOTTAKEN;
       }
     case CUSTOM:
+      idx = (pc ^ h ^ h >> 10 ^ h >> 20 ^ h >> 30 ^ h >> 40) & mask10;
+      tag = (pc ^ h ^ h >> 8 ^ h >> 16 ^ h >> 24 ^ h >> 32) & mask8;
+      for(int x = 3; x >= 0; x--) {
+        if(tag == (bank[x][idx] >> 1 & mask8))
+          return bank[x][idx] >> 11;
+        idx ^= (h >> (x + 1) * 10) & mask10;
+        tag ^= (h >> (x + 1) * 8) & mask8;
+      }
+      return bank0[pc & pcmask] >> 3;
     default:
       break;
   }
@@ -110,8 +124,8 @@ make_prediction(uint32_t pc)
 void
 train_predictor(uint32_t pc, uint8_t outcome)
 {
+  int gpred, lpred, lhistory, correctness = 0, x;
   switch (bpType) {
-    int gpred, lpred, lhistory, correctness = 0;
     case GSHARE:
       if(outcome == TAKEN && gresult[(pc ^ ghistory) & gmask] < ST) {
         gresult[(pc ^ ghistory) & gmask]++;
@@ -129,12 +143,12 @@ train_predictor(uint32_t pc, uint8_t outcome)
       if(lpred != gpred) {
         if(gpred == outcome) {
           if(selector[ghistory] < 3) {
-            selector[ghistory] += 1;
+            selector[ghistory]++;
           }
         }
         else {
           if(selector[ghistory] > 0) {
-            selector[ghistory] -= 1;
+            selector[ghistory]--;
           }
         }
       }
@@ -156,6 +170,62 @@ train_predictor(uint32_t pc, uint8_t outcome)
       lhistoryTable[pc & pcmask] = ((lhistoryTable[pc & pcmask] << 1) + (outcome == TAKEN)) & lmask;
       break;
     case CUSTOM:
+      // update 3-bit counter
+      idxs[3] = (pc ^ h ^ h >> 10 ^ h >> 20 ^ h >> 30 ^ h >> 40) & mask10;
+      tags[3] = (pc ^ h ^ h >> 8 ^ h >> 16 ^ h >> 24 ^ h >> 32) & mask8;
+      idxs[2] = (pc ^ h ^ h >> 10 ^ h >> 20 ^ h >> 30) & mask10;
+      tags[2] = (pc ^ h ^ h >> 8 ^ h >> 16 ^ h >> 24) & mask8;
+      idxs[1] = (pc ^ h ^ h >> 10 ^ h >> 20) & mask10;
+      tags[1] = (pc ^ h ^ h >> 8 ^ h >> 16) & mask8;
+      idxs[0] = (pc ^ h ^ h >> 10) & mask10;
+      tags[0] = (pc ^ h ^ h >> 8) & mask8;
+      int flag = 0;
+      for(x = 3; x >= 0; x--) {
+        if(tags[x] == (bank[x][idxs[x]] >> 1 & mask8)) {
+          lpred = bank[x][idxs[x]] >> 9;
+          if(outcome == TAKEN && lpred < 7)
+            bank[x][idxs[x]] += 0x200;
+          else if(outcome == NOTTAKEN && lpred > 0)
+            bank[x][idxs[x]] -= 0x200;
+          flag = 1;
+          break;
+        }
+      }
+      if(flag == 0) {
+        lpred = bank0[pc & pcmask] >> 1;
+        if(outcome == TAKEN && lpred < 7)
+          bank0[pc & pcmask] += 2;
+        else if(outcome == NOTTAKEN && lpred > 0)
+          bank0[pc & pcmask] -= 2;
+      }
+      // allocate new entries
+      flag = 0;
+      if(x < 3 && outcome != lpred > 3) {
+        for(int i = 3; i > x; i--){
+          if(bank[i][idxs[i]] % 2 == 0) {
+            bank[i][idxs[i]] = outcome?0x800:0x600 + tags[i] * 2;
+            flag = 1;
+          }
+        }
+        if(flag == 0) {
+          int r = rand() % 4;
+          bank[r][idxs[r]] = outcome?0x800:0x600 + tags[r] * 2;
+        }
+      }
+      // update u and m
+      if(lpred != bank0[pc & pcmask] >> 1) {
+        if(outcome == lpred > 3) {
+          if(x >= 0)
+            bank[x][idxs[x]] |= 0x0001;
+          bank0[pc & pcmask] |= 0x0001;
+        }
+        else {
+          if(x >= 0)
+            bank[x][idxs[x]] &= 0xFFFE;
+          bank0[pc & pcmask] &= 0xFFFE;
+        }
+      }
+      h = (h << 1) + (outcome == TAKEN);
     default:
       break;
   }
