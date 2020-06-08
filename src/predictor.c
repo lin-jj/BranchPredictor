@@ -34,7 +34,8 @@ int verbose;
 //------------------------------------//
 
 int32_t *gresult, *lhistoryTable, *lresult, *selector;
-uint64_t ghistory = 0, mask10 = 0x3FF, mask8 = 0xFF, pcmask, gmask, lmask;
+uint64_t mask10 = 0x3FF, mask8 = 0xFF, pcmask, gmask, lmask;
+__uint128_t ghistory;
 int8_t bank0[4096] = {6};
 int16_t bank[4][1024] = {0x600}, idx, tag, *idxs, *tags; 
 
@@ -45,19 +46,28 @@ int16_t bank[4][1024] = {0x600}, idx, tag, *idxs, *tags;
 void get_idx(uint32_t pc) {
   free(idxs);
   idxs = malloc(4 * sizeof(int16_t));
-  idxs[0] = (pc ^ ghistory ^ ghistory >> 10) & mask10;
-  idxs[1] = (idxs[0] ^ ghistory >> 20) & mask10;
-  idxs[2] = (idxs[1] ^ ghistory >> 30) & mask10;
-  idxs[3] = (idxs[2] ^ ghistory >> 40) & mask10;
+  idxs[0] = (pc ^ pc >> 10 ^ ghistory) & mask10;
+  idxs[1] = (idxs[0] ^ ghistory >> 10) & mask10;
+  idxs[2] = (idxs[1] ^ ghistory >> 20 ^ ghistory >> 30) & mask10;
+  idxs[3] = (idxs[2] ^ ghistory >> 40 ^ ghistory >> 50 ^ ghistory >> 60 ^ ghistory >> 70) & mask10;
 }
 
 void get_tag(uint32_t pc) {
   free(tags);
   tags = malloc(4 * sizeof(int16_t));
-  tags[0] = (pc ^ ghistory ^ ghistory >> 8) & mask8;
-  tags[1] = (tags[0] ^ ghistory >> 16) & mask8;
-  tags[2] = (tags[1] ^ ghistory >> 24) & mask8;
-  tags[3] = (tags[2] ^ ghistory >> 32) & mask8;
+  uint8_t csr1, csr2;
+  csr1 = (ghistory << 6 ^ ghistory >> 2) & mask8;
+  csr2 = (ghistory << 4 ^ ghistory >> 3) & mask8;
+  tags[0] = (pc ^ csr1 ^ csr2 << 1) & mask8;
+  csr1 = (ghistory << 4 ^ ghistory >> 4 ^ ghistory >> 12) & mask8;
+  csr2 = (ghistory << 1 ^ ghistory >> 6 ^ ghistory >> 13) & mask8;
+  tags[1] = (pc ^ csr1 ^ csr2 << 1) & mask8;
+  csr1 = (ghistory ^ ghistory >> 8 ^ ghistory >> 16 ^ ghistory >> 24 ^ ghistory >> 32) & mask8;
+  csr2 = (ghistory << 2 ^ ghistory >> 5 ^ ghistory >> 12 ^ ghistory >> 19 ^ ghistory >> 26 ^ ghistory >> 33) & mask8;
+  tags[2] = (pc ^ csr1 ^ csr2 << 1) & mask8;
+  csr1 = (csr1 ^ ghistory >> 40 ^ ghistory >> 48 ^ ghistory >> 56 ^ ghistory >> 64 ^ ghistory >> 72) & mask8;
+  csr2 = (ghistory << 4 ^ ghistory >> 3 ^ ghistory >> 10 ^ ghistory >> 17 ^ ghistory >> 24 ^ ghistory >> 31 ^ ghistory >> 38 ^ ghistory >> 45 ^ ghistory >> 52 ^ ghistory >> 59 ^ ghistory >> 66 ^ ghistory >> 73) & mask8;
+  tags[3] = (pc ^ csr1 ^ csr2 << 1) & mask8;
 }
 
 // Initialize the predictor
@@ -81,6 +91,7 @@ init_predictor()
       gmask = (1 << ghistoryBits) - 1;
       break;
     case CUSTOM:
+      ghistory = 0;
       srand(5432);
       pcmask = (1 << 12) - 1;
       break;
@@ -186,9 +197,9 @@ train_predictor(uint32_t pc, uint8_t outcome)
       lhistoryTable[pc & pcmask] = ((lhistoryTable[pc & pcmask] << 1) + (outcome == TAKEN)) & lmask;
       break;
     case CUSTOM:
-      // update 3-bit counter
       get_idx(pc);
       get_tag(pc);
+      // update 3-bit counter
       int flag = 0;
       for(x = 3; x >= 0; x--) {
         if(tags[x] == (bank[x][idxs[x]] >> 1 & mask8)) {
