@@ -36,7 +36,6 @@ int verbose;
 int32_t *gresult, *lhistoryTable, *lresult, *selector;
 uint64_t mask10 = 0x3FF, mask8 = 0xFF, pcmask, gmask, lmask;
 __uint128_t ghistory;
-int8_t bank0[4096] = {6};
 int16_t bank[4][1024] = {0x600}, idx, tag, *idxs, *tags; 
 
 //------------------------------------//
@@ -93,7 +92,15 @@ init_predictor()
     case CUSTOM:
       ghistory = 0;
       srand(5432);
-      pcmask = (1 << 12) - 1;
+      pcIndexBits = 12;
+      pcmask = (1 << pcIndexBits) - 1;
+      lhistoryBits = 10;
+      lhistoryTable = calloc(1 << pcIndexBits, sizeof(int32_t));
+      lresult  = malloc((1 << lhistoryBits) * sizeof(int32_t));
+      for(int i = 0; i < (1 << lhistoryBits); i++) {
+        lresult[i] = 3;
+      }
+      lmask = (1 << lhistoryBits) - 1;
       break;
     default:
       break;
@@ -136,7 +143,9 @@ make_prediction(uint32_t pc)
         if(tags[x] == (bank[x][idxs[x]] >> 1 & mask8))
           return bank[x][idxs[x]] >> 11;
       }
-      return bank0[pc & pcmask] >> 3;
+      lhistory = lhistoryTable[pc & pcmask];
+      lpred = lresult[lhistory] > 3;
+      return lpred;
     default:
       break;
   }
@@ -213,11 +222,15 @@ train_predictor(uint32_t pc, uint8_t outcome)
         }
       }
       if(flag == 0) {
-        lpred = bank0[pc & pcmask] >> 1;
-        if(outcome == TAKEN && lpred < 7)
-          bank0[pc & pcmask] += 2;
-        else if(outcome == NOTTAKEN && lpred > 0)
-          bank0[pc & pcmask] -= 2;
+        lhistory = lhistoryTable[pc & pcmask];
+        lpred = lresult[lhistory];
+        if(outcome == TAKEN && lpred < 7) {
+          lresult[lhistory]++;
+        }
+        if(outcome == NOTTAKEN && lpred > 0) {
+          lresult[lhistory]--;
+        }
+        lhistoryTable[pc & pcmask] = ((lhistoryTable[pc & pcmask] << 1) + (outcome == TAKEN)) & lmask;
       }
       // allocate new entries
       flag = 0;
@@ -233,17 +246,15 @@ train_predictor(uint32_t pc, uint8_t outcome)
           bank[r][idxs[r]] = outcome?0x800:0x600 + tags[r] * 2;
         }
       }
-      // update u and m
-      if(lpred != bank0[pc & pcmask] >> 1) {
+      // update valid bit
+      if(lpred != lresult[lhistoryTable[pc & pcmask]]) {
         if(outcome == lpred > 3) {
           if(x >= 0)
             bank[x][idxs[x]] |= 0x0001;
-          bank0[pc & pcmask] |= 0x0001;
         }
         else {
           if(x >= 0)
             bank[x][idxs[x]] &= 0xFFFE;
-          bank0[pc & pcmask] &= 0xFFFE;
         }
       }
       // update global history
