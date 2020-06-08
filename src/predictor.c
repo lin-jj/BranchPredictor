@@ -92,7 +92,7 @@ init_predictor()
     case CUSTOM:
       ghistory = 0;
       srand(5432);
-      pcIndexBits = 12;
+      pcIndexBits = 10;
       pcmask = (1 << pcIndexBits) - 1;
       lhistoryBits = 10;
       lhistoryTable = calloc(1 << pcIndexBits, sizeof(int32_t));
@@ -144,8 +144,7 @@ make_prediction(uint32_t pc)
           return bank[x][idxs[x]] >> 11;
       }
       lhistory = lhistoryTable[pc & pcmask];
-      lpred = lresult[lhistory] > 3;
-      return lpred;
+      return lresult[lhistory] > 3;
     default:
       break;
   }
