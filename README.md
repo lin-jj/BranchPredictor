@@ -1,5 +1,7 @@
 # CSE240A Branch Predictor Project
 
+A project of CSE240A, UCSD.
+
 ## Table of Contents
   * [Introduction](#introduction)
   * [Code Integrity](#code-integrity)
